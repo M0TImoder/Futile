@@ -1,10 +1,11 @@
 import math
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Sequence, Tuple
 
 import pygame
 
 from .physics import PhysicsState, ground_height
+from .world import MeshGeometry, WorldObject
 
 
 @dataclass
@@ -97,3 +98,107 @@ def draw_debug(
         f"slopes:{len(slopes)} jump_v:{jump_v:.1f} grav:{grav:.1f}"
     )
     ctx.screen.blit(font.render(info, True, (200, 200, 200)), (10, 10))
+
+
+def render_scene(
+    ctx: RenderContext,
+    cam: Dict[str, float],
+    objects: Sequence[WorldObject],
+    enable_wire: bool = False,
+) -> None:
+    cam_pos = (cam["x"], cam["y"], cam["z"])
+    visible_objects = [obj for obj in objects if obj.visible]
+    visible_objects.sort(key=lambda obj: obj.distance_to(cam_pos), reverse=True)
+    for obj in visible_objects:
+        geometry = obj.mesh.select_geometry(obj.distance_to(cam_pos))
+        _render_object(ctx, cam, obj, geometry, enable_wire)
+
+
+def _render_object(
+    ctx: RenderContext,
+    cam: Dict[str, float],
+    obj: WorldObject,
+    geometry: MeshGeometry,
+    enable_wire: bool,
+) -> None:
+    world_vertices = list(obj.world_vertices(geometry))
+    cam_vertices: List[Tuple[float, float, float]] = []
+    for vx, vy, vz in world_vertices:
+        px = vx - cam["x"]
+        py = vy - cam["y"]
+        pz = vz - cam["z"]
+        cam_vertices.append(rot_cam(px, py, pz, cam))
+
+    for a, b, c in geometry.indices:
+        v0 = cam_vertices[a]
+        v1 = cam_vertices[b]
+        v2 = cam_vertices[c]
+        if v0[2] <= 0.05 and v1[2] <= 0.05 and v2[2] <= 0.05:
+            continue
+        # カメラ空間での裏面判定
+        normal = _triangle_normal(v0, v1, v2)
+        if normal[2] >= 0.0:
+            continue
+        # 法線からライティングを決定
+        shade = _shade(normal, v0, obj.color)
+        pts2d = [proj(ctx, *v) for v in (v0, v1, v2)]
+        pygame.draw.polygon(ctx.screen, shade, pts2d)
+        if enable_wire:
+            pygame.draw.lines(ctx.screen, (40, 40, 40), True, pts2d, 1)
+
+
+def _triangle_normal(v0: Tuple[float, float, float], v1: Tuple[float, float, float], v2: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    edge1 = (v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2])
+    edge2 = (v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2])
+    return (
+        edge1[1] * edge2[2] - edge1[2] * edge2[1],
+        edge1[2] * edge2[0] - edge1[0] * edge2[2],
+        edge1[0] * edge2[1] - edge1[1] * edge2[0],
+    )
+
+
+def _shade(normal: Tuple[float, float, float], view_point: Tuple[float, float, float], color: Tuple[int, int, int]) -> Tuple[int, int, int]:
+    nx, ny, nz = normal
+    length = math.sqrt(nx * nx + ny * ny + nz * nz)
+    if length == 0.0:
+        return color
+    nx /= length
+    ny /= length
+    nz /= length
+    light = (0.3, 0.8, 0.5)
+    lambert = max(0.0, min(1.0, nx * light[0] + ny * light[1] + nz * light[2]))
+    view = _normalize((-view_point[0], -view_point[1], -view_point[2]))
+    reflect = _reflect((-light[0], -light[1], -light[2]), (nx, ny, nz))
+    # レイトレーシング風の反射寄与
+    spec = max(0.0, reflect[0] * view[0] + reflect[1] * view[1] + reflect[2] * view[2]) ** 16
+    rim = max(0.0, 1.0 - max(0.0, nz))
+    # リムライトで輪郭を強調
+    intensity = min(1.0, 0.2 + 0.6 * lambert + 0.15 * spec + 0.05 * rim)
+    return tuple(min(255, max(0, int(channel * intensity))) for channel in color)
+
+
+def _normalize(vec: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    vx, vy, vz = vec
+    length = math.sqrt(vx * vx + vy * vy + vz * vz)
+    if length == 0.0:
+        return (0.0, 0.0, 0.0)
+    return vx / length, vy / length, vz / length
+
+
+def _reflect(light: Tuple[float, float, float], normal: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    dot = light[0] * normal[0] + light[1] * normal[1] + light[2] * normal[2]
+    return (
+        light[0] - 2.0 * dot * normal[0],
+        light[1] - 2.0 * dot * normal[1],
+        light[2] - 2.0 * dot * normal[2],
+    )
+
+
+__all__ = [
+    "RenderContext",
+    "draw_grid",
+    "draw_debug",
+    "proj",
+    "rot_cam",
+    "render_scene",
+]

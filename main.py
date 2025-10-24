@@ -1,16 +1,20 @@
 import math
 import sys
+from pathlib import Path
 
 import pygame
 
 from futile import (
+    MeshManager,
     PhysicsState,
     RenderContext,
+    WorldObject,
     draw_debug,
     draw_grid,
     ground_height,
     handle_movement,
     read_input,
+    render_scene,
     upd_phys,
 )
 
@@ -31,6 +35,7 @@ EYE_H = 40.0
 MAX_STEP = 30.0
 PITCH_MIN = -math.pi / 2 + 0.01
 PITCH_MAX = math.pi / 2 - 0.01
+ASSET_DIR = Path(__file__).parent / "assets"
 
 
 def main() -> None:
@@ -46,6 +51,24 @@ def main() -> None:
     state = PhysicsState()
     jump_v = 140.0
     jump_default = jump_v
+    mesh_manager = MeshManager(ASSET_DIR)
+    # メッシュリソースのキャッシュを活用
+    world_objects = [
+        WorldObject(
+            mesh=mesh_manager.load("cube.fsm"),
+            position=(0.0, -120.0, 420.0),
+            rotation=(0.0, 0.0, 0.0),
+            scale=60.0,
+            color=(190, 180, 210),
+        ),
+        WorldObject(
+            mesh=mesh_manager.load("pyramid.obj"),
+            position=(160.0, -140.0, 600.0),
+            rotation=(0.0, math.radians(25.0), 0.0),
+            scale=80.0,
+            color=(210, 170, 150),
+        ),
+    ]
 
     cam["y"] = ground_height(cam["x"], cam["z"], GROUND_Y_BASE, slopes) + EYE_H
 
@@ -103,6 +126,7 @@ def main() -> None:
 
         screen.fill((15, 15, 20))
         draw_grid(ctx, cam, slopes, GROUND_Y_BASE, GRID_OFF, G_SIZE, G_RANGE)
+        render_scene(ctx, cam, world_objects)
         draw_debug(ctx, cam, state, fps, jump_v, GRAV, slopes)
         pygame.display.flip()
 
