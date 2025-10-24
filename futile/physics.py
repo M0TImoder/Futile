@@ -3,6 +3,9 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 
+GROUND_REATTACH_EPSILON = 0.5
+
+
 Vector3 = Tuple[float, float, float]
 
 
@@ -652,6 +655,7 @@ def _handle_movement_world(
     world: CollisionWorld,
 ) -> None:
     foot_y = cam["y"] - controller.eye_height
+    ascending = state.vel_y > 0.0
     support = world.sample_support(cam["x"], cam["z"])
     if support.hit:
         ground = support.obj.surface
@@ -667,12 +671,21 @@ def _handle_movement_world(
                 state.vz = slip_z
             state.on_ground = False
         else:
-            state.on_ground = True
-            state.ground_normal = support.normal
-            state.ground_surface = ground
-            state.ground_velocity = ground_velocity(support.obj)
-            foot_y = max(foot_y, support.height)
-            cam["y"] = foot_y + controller.eye_height
+            if ascending:
+                # 上昇中は地面拘束を外す
+                state.on_ground = False
+            else:
+                gap = foot_y - support.height
+                if gap <= GROUND_REATTACH_EPSILON:
+                    state.on_ground = True
+                    state.ground_normal = support.normal
+                    state.ground_surface = ground
+                    state.ground_velocity = ground_velocity(support.obj)
+                    foot_y = max(foot_y, support.height)
+                    cam["y"] = foot_y + controller.eye_height
+                else:
+                    # 空中維持のための耐性
+                    state.on_ground = False
     else:
         state.on_ground = False
 
@@ -781,6 +794,8 @@ def upd_phys(
                     gx, gy, gz = state.ground_velocity
                     cam["x"] += gx * dt
                     cam["z"] += gz * dt
+            else:
+                state.on_ground = False
         else:
             state.on_ground = False
     else:
