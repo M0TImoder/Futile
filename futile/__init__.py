@@ -1,6 +1,17 @@
 from .input import read_input
 from .mesh_loader import MeshLoaderError
-from .physics import PhysicsState, handle_movement, upd_phys, ground_height
+from .physics import (
+    CollisionObject,
+    CollisionWorld,
+    ControllerSettings,
+    NavigationGraph,
+    PhysicsState,
+    SurfaceProperties,
+    build_default_collision_world,
+    ground_height,
+    handle_movement,
+    upd_phys,
+)
 from .render import RenderContext, draw_grid, draw_debug, render_scene
 from .resources import MeshManager
 from .world import Mesh, MeshGeometry, MeshLOD, WorldObject
@@ -9,7 +20,13 @@ __all__ = [
     "read_input",
     "MeshLoaderError",
     "MeshManager",
+    "CollisionObject",
+    "CollisionWorld",
+    "ControllerSettings",
     "PhysicsState",
+    "SurfaceProperties",
+    "NavigationGraph",
+    "build_default_collision_world",
     "handle_movement",
     "upd_phys",
     "ground_height",

@@ -5,10 +5,12 @@ from pathlib import Path
 import pygame
 
 from futile import (
+    CollisionWorld,
     MeshManager,
     PhysicsState,
     RenderContext,
     WorldObject,
+    build_default_collision_world,
     draw_debug,
     draw_grid,
     ground_height,
@@ -48,6 +50,7 @@ def main() -> None:
 
     cam = {"x": 0.0, "y": 0.0, "z": 0.0, "yaw": 0.0, "pitch": 0.0}
     slopes: list[dict[str, float]] = []
+    collision_world: CollisionWorld = build_default_collision_world(GROUND_Y_BASE, slopes)
     state = PhysicsState()
     jump_v = 140.0
     jump_default = jump_v
@@ -70,7 +73,7 @@ def main() -> None:
         ),
     ]
 
-    cam["y"] = ground_height(cam["x"], cam["z"], GROUND_Y_BASE, slopes) + EYE_H
+    cam["y"] = ground_height(cam["x"], cam["z"], GROUND_Y_BASE, collision_world) + EYE_H
 
     pygame.event.set_grab(True)
     pygame.mouse.set_visible(False)
@@ -116,13 +119,13 @@ def main() -> None:
             DASH_MUL,
             ACC,
             FRIC,
-            slopes,
+            collision_world,
             EYE_H,
             MAX_STEP,
             GROUND_Y_BASE,
             jump_v,
         )
-        upd_phys(cam, state, dt, GRAV, EYE_H, slopes, GROUND_Y_BASE)
+        upd_phys(cam, state, dt, GRAV, EYE_H, collision_world, GROUND_Y_BASE)
 
         screen.fill((15, 15, 20))
         draw_grid(ctx, cam, slopes, GROUND_Y_BASE, GRID_OFF, G_SIZE, G_RANGE)
