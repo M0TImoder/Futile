@@ -12,7 +12,15 @@ from .physics import (
     handle_movement,
     upd_phys,
 )
-from .render import RenderContext, draw_grid, draw_debug, render_scene
+from .render import (
+    DirectionalLight,
+    LightingSetup,
+    PointLight,
+    RenderContext,
+    draw_debug,
+    draw_grid,
+    render_scene,
+)
 from .resources import MeshManager
 from .world import Mesh, MeshGeometry, MeshLOD, WorldObject
 
@@ -30,6 +38,9 @@ __all__ = [
     "handle_movement",
     "upd_phys",
     "ground_height",
+    "DirectionalLight",
+    "PointLight",
+    "LightingSetup",
     "RenderContext",
     "draw_grid",
     "draw_debug",

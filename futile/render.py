@@ -1,5 +1,5 @@
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Sequence, Tuple
 
 import pygame
@@ -9,11 +9,40 @@ from .world import MeshGeometry, WorldObject
 
 
 @dataclass
+class DirectionalLight:
+    # 平行光の方向と色を保持する
+    direction: Tuple[float, float, float]
+    color: Tuple[float, float, float]
+    intensity: float = 1.0
+    specular_intensity: float = 0.0
+
+
+@dataclass
+class PointLight:
+    # 点光源の位置と減衰を保持する
+    position: Tuple[float, float, float]
+    color: Tuple[float, float, float]
+    intensity: float = 1.0
+    attenuation: float = 0.0
+    specular_intensity: float = 0.0
+
+
+@dataclass
+class LightingSetup:
+    # シーン全体の環境光とライトを保持する
+    ambient_color: Tuple[float, float, float]
+    directional_lights: List[DirectionalLight] = field(default_factory=list)
+    point_lights: List[PointLight] = field(default_factory=list)
+    rim_intensity: float = 0.05
+
+
+@dataclass
 class RenderContext:
     screen: pygame.Surface
     cx: float
     cy: float
     fov_d: float
+    lighting: LightingSetup | None = None
 
 
 def proj(ctx: RenderContext, px: float, py: float, pz: float) -> tuple[float, float]:
@@ -104,14 +133,30 @@ def render_scene(
     ctx: RenderContext,
     cam: Dict[str, float],
     objects: Sequence[WorldObject],
+    lighting: LightingSetup | None = None,
     enable_wire: bool = False,
 ) -> None:
+    if lighting is None:
+        lighting = ctx.lighting
+    if lighting is None:
+        lighting = LightingSetup(
+            ambient_color=(0.2, 0.2, 0.2),
+            directional_lights=[
+                DirectionalLight(
+                    direction=(0.3, 0.8, 0.5),
+                    color=(1.0, 1.0, 1.0),
+                    intensity=0.6,
+                    specular_intensity=0.15,
+                )
+            ],
+            rim_intensity=0.05,
+        )
     cam_pos = (cam["x"], cam["y"], cam["z"])
     visible_objects = [obj for obj in objects if obj.visible]
     visible_objects.sort(key=lambda obj: obj.distance_to(cam_pos), reverse=True)
     for obj in visible_objects:
         geometry = obj.mesh.select_geometry(obj.distance_to(cam_pos))
-        _render_object(ctx, cam, obj, geometry, enable_wire)
+        _render_object(ctx, cam, obj, geometry, lighting, enable_wire)
 
 
 def _render_object(
@@ -119,6 +164,7 @@ def _render_object(
     cam: Dict[str, float],
     obj: WorldObject,
     geometry: MeshGeometry,
+    lighting: LightingSetup,
     enable_wire: bool,
 ) -> None:
     world_vertices = list(obj.world_vertices(geometry))
@@ -140,7 +186,8 @@ def _render_object(
         if normal[2] >= 0.0:
             continue
         # 法線からライティングを決定
-        shade = _shade(normal, v0, obj.color)
+        w0 = world_vertices[a]
+        shade = _shade(normal, v0, w0, obj.color, lighting)
         pts2d = [proj(ctx, *v) for v in (v0, v1, v2)]
         pygame.draw.polygon(ctx.screen, shade, pts2d)
         if enable_wire:
@@ -157,7 +204,13 @@ def _triangle_normal(v0: Tuple[float, float, float], v1: Tuple[float, float, flo
     )
 
 
-def _shade(normal: Tuple[float, float, float], view_point: Tuple[float, float, float], color: Tuple[int, int, int]) -> Tuple[int, int, int]:
+def _shade(
+    normal: Tuple[float, float, float],
+    view_point: Tuple[float, float, float],
+    world_point: Tuple[float, float, float],
+    color: Tuple[int, int, int],
+    lighting: LightingSetup,
+) -> Tuple[int, int, int]:
     nx, ny, nz = normal
     length = math.sqrt(nx * nx + ny * ny + nz * nz)
     if length == 0.0:
@@ -165,16 +218,49 @@ def _shade(normal: Tuple[float, float, float], view_point: Tuple[float, float, f
     nx /= length
     ny /= length
     nz /= length
-    light = (0.3, 0.8, 0.5)
-    lambert = max(0.0, min(1.0, nx * light[0] + ny * light[1] + nz * light[2]))
     view = _normalize((-view_point[0], -view_point[1], -view_point[2]))
-    reflect = _reflect((-light[0], -light[1], -light[2]), (nx, ny, nz))
-    # レイトレーシング風の反射寄与
-    spec = max(0.0, reflect[0] * view[0] + reflect[1] * view[1] + reflect[2] * view[2]) ** 16
     rim = max(0.0, 1.0 - max(0.0, nz))
-    # リムライトで輪郭を強調
-    intensity = min(1.0, 0.2 + 0.6 * lambert + 0.15 * spec + 0.05 * rim)
-    return tuple(min(255, max(0, int(channel * intensity))) for channel in color)
+    diffuse = [0.0, 0.0, 0.0]
+    specular = [0.0, 0.0, 0.0]
+    for light in lighting.directional_lights:
+        light_dir = _normalize(light.direction)
+        lambert = max(0.0, nx * light_dir[0] + ny * light_dir[1] + nz * light_dir[2])
+        lambert *= light.intensity
+        reflect = _reflect((-light_dir[0], -light_dir[1], -light_dir[2]), (nx, ny, nz))
+        spec = max(0.0, reflect[0] * view[0] + reflect[1] * view[1] + reflect[2] * view[2]) ** 16
+        spec *= light.specular_intensity
+        for i in range(3):
+            diffuse[i] += lambert * light.color[i]
+            specular[i] += spec * light.color[i]
+    for light in lighting.point_lights:
+        to_light = (
+            light.position[0] - world_point[0],
+            light.position[1] - world_point[1],
+            light.position[2] - world_point[2],
+        )
+        dist = math.sqrt(to_light[0] * to_light[0] + to_light[1] * to_light[1] + to_light[2] * to_light[2])
+        if dist == 0.0:
+            continue
+        light_dir = (to_light[0] / dist, to_light[1] / dist, to_light[2] / dist)
+        atten = 1.0
+        if light.attenuation > 0.0:
+            atten = 1.0 / (1.0 + light.attenuation * dist * dist)
+        lambert = max(0.0, nx * light_dir[0] + ny * light_dir[1] + nz * light_dir[2])
+        lambert *= light.intensity * atten
+        reflect = _reflect((-light_dir[0], -light_dir[1], -light_dir[2]), (nx, ny, nz))
+        spec = max(0.0, reflect[0] * view[0] + reflect[1] * view[1] + reflect[2] * view[2]) ** 16
+        spec *= light.specular_intensity * atten
+        for i in range(3):
+            diffuse[i] += lambert * light.color[i]
+            specular[i] += spec * light.color[i]
+    rim_component = rim * lighting.rim_intensity
+    shaded = []
+    for i, channel in enumerate(color):
+        intensity = lighting.ambient_color[i]
+        intensity += diffuse[i] + specular[i] + rim_component
+        intensity = max(0.0, min(1.0, intensity))
+        shaded.append(min(255, max(0, int(channel * intensity))))
+    return tuple(shaded)
 
 
 def _normalize(vec: Tuple[float, float, float]) -> Tuple[float, float, float]:
@@ -195,6 +281,9 @@ def _reflect(light: Tuple[float, float, float], normal: Tuple[float, float, floa
 
 
 __all__ = [
+    "DirectionalLight",
+    "PointLight",
+    "LightingSetup",
     "RenderContext",
     "draw_grid",
     "draw_debug",
