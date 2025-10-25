@@ -1,3 +1,4 @@
+import heapq
 import math
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple, Union
@@ -439,6 +440,22 @@ class NavNode:
 class NavigationGraph:
     nodes: List[NavNode]
 
+    def __post_init__(self) -> None:
+        self._index_precision = 1e-3
+        self._position_index: Dict[Tuple[int, int, int], int] = {}
+        for idx, node in enumerate(self.nodes):
+            key = self._position_key(node.position, self._index_precision)
+            if key not in self._position_index:
+                self._position_index[key] = idx
+
+    def _position_key(self, position: Vector3, precision: float = 1e-3) -> Tuple[int, int, int]:
+        inv = 1.0 / precision
+        return (
+            int(round(position[0] * inv)),
+            int(round(position[1] * inv)),
+            int(round(position[2] * inv)),
+        )
+
     def build_edges(self) -> None:
         for idx, node in enumerate(self.nodes):
             for jdx, other in enumerate(self.nodes):
@@ -453,6 +470,108 @@ class NavigationGraph:
                 if dist <= 120.0:
                     # 近接ノード間に移動候補エッジを追加
                     node.neighbors.append(jdx)
+
+    def node_count(self) -> int:
+        return len(self.nodes)
+
+    def node_at(self, position: Vector3, tolerance: float = 1e-3) -> Optional[int]:
+        key = self._position_key(position, self._index_precision)
+        idx = self._position_index.get(key)
+        if idx is None:
+            return None
+        node = self.nodes[idx]
+        if self._distance(node.position, position) <= tolerance:
+            return idx
+        return None
+
+    def node_position(self, node_id: int) -> Vector3:
+        node = self._require_node(node_id)
+        return node.position
+
+    def neighbors(self, node_id: int) -> List[int]:
+        node = self._require_node(node_id)
+        return list(node.neighbors)
+
+    def edge_cost(self, start_id: int, end_id: int) -> float:
+        start = self._require_node(start_id)
+        end = self._require_node(end_id)
+        return self._distance(start.position, end.position)
+
+    def find_path(
+        self,
+        start: Union[int, Vector3],
+        goal: Union[int, Vector3],
+        *,
+        return_nodes: bool = False,
+    ) -> Optional[List[Union[Vector3, NavNode]]]:
+        start_id = self._resolve_node_reference(start)
+        goal_id = self._resolve_node_reference(goal)
+        if start_id == goal_id:
+            node = self.nodes[start_id]
+            return [node if return_nodes else node.position]
+
+        open_heap: List[Tuple[float, int]] = []
+        heapq.heappush(open_heap, (0.0, start_id))
+        came_from: Dict[int, int] = {}
+        g_score: Dict[int, float] = {start_id: 0.0}
+        f_score: Dict[int, float] = {start_id: self._heuristic(start_id, goal_id)}
+
+        while open_heap:
+            _, current = heapq.heappop(open_heap)
+            if current == goal_id:
+                return self._reconstruct_path(came_from, current, return_nodes)
+            for neighbor in self.neighbors(current):
+                tentative = g_score[current] + self.edge_cost(current, neighbor)
+                if tentative >= g_score.get(neighbor, math.inf):
+                    continue
+                came_from[neighbor] = current
+                g_score[neighbor] = tentative
+                f_score[neighbor] = tentative + self._heuristic(neighbor, goal_id)
+                heapq.heappush(open_heap, (f_score[neighbor], neighbor))
+        return None
+
+    def _reconstruct_path(
+        self,
+        came_from: Dict[int, int],
+        current: int,
+        return_nodes: bool,
+    ) -> List[Union[Vector3, NavNode]]:
+        order: List[int] = [current]
+        while current in came_from:
+            current = came_from[current]
+            order.append(current)
+        order.reverse()
+        if return_nodes:
+            return [self.nodes[idx] for idx in order]
+        return [self.nodes[idx].position for idx in order]
+
+    def _heuristic(self, node_id: int, goal_id: int) -> float:
+        start = self._require_node(node_id)
+        goal = self._require_node(goal_id)
+        return self._distance(start.position, goal.position)
+
+    def _distance(self, a: Vector3, b: Vector3) -> float:
+        dx = a[0] - b[0]
+        dy = a[1] - b[1]
+        dz = a[2] - b[2]
+        return math.sqrt(dx * dx + dy * dy + dz * dz)
+
+    def _resolve_node_reference(self, reference: Union[int, Vector3]) -> int:
+        if isinstance(reference, int):
+            return self._validate_node_id(reference)
+        idx = self.node_at(reference)
+        if idx is None:
+            raise ValueError("unknown node position")
+        return idx
+
+    def _validate_node_id(self, node_id: int) -> int:
+        if node_id < 0 or node_id >= self.node_count():
+            raise ValueError("unknown node id")
+        return node_id
+
+    def _require_node(self, node_id: int) -> NavNode:
+        idx = self._validate_node_id(node_id)
+        return self.nodes[idx]
 
 
 def build_default_collision_world(
