@@ -20,6 +20,7 @@ class DimensionSettings:
     sky_color: ColorRGB
     ground_color: ColorRGB
     base_friction: float
+    draw_grid: bool = True
 
 
 @dataclass

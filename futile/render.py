@@ -8,6 +8,10 @@ from .physics import PhysicsState, ground_height
 from .world import Material, MeshGeometry, WorldObject
 
 
+_NEAR_CLIP: float = 0.05
+_CLIP_EPS: float = 1e-4
+
+
 @dataclass
 class DirectionalLight:
     # 平行光の方向と色を保持する
@@ -69,6 +73,35 @@ def rot_cam(px: float, py: float, pz: float, cam: Dict[str, float]) -> tuple[flo
     return rx, ry, zz
 
 
+def _clip_polygon_near(
+    vertices: Sequence[Tuple[float, float, float]],
+    near: float = _NEAR_CLIP,
+) -> List[Tuple[float, float, float]]:
+    # 近クリップ面でポリゴンを切り詰める
+    if not vertices:
+        return []
+    clipped: List[Tuple[float, float, float]] = []
+    prev = vertices[-1]
+    prev_inside = prev[2] > near
+    for curr in vertices:
+        curr_inside = curr[2] > near
+        if prev_inside != curr_inside:
+            denom = curr[2] - prev[2]
+            if abs(denom) < 1e-8:
+                ix = curr[0]
+                iy = curr[1]
+            else:
+                t = (near - prev[2]) / denom
+                ix = prev[0] + (curr[0] - prev[0]) * t
+                iy = prev[1] + (curr[1] - prev[1]) * t
+            clipped.append((ix, iy, near + _CLIP_EPS))
+        if curr_inside:
+            clipped.append((curr[0], curr[1], curr[2]))
+        prev = curr
+        prev_inside = curr_inside
+    return clipped
+
+
 def draw_grid(
     ctx: RenderContext,
     cam: Dict[str, float],
@@ -117,6 +150,68 @@ def draw_grid(
                     pts.append(proj(ctx, rx, ry, rz))
             if len(pts) == 4:
                 pygame.draw.lines(ctx.screen, col, True, pts, 1)
+
+
+def draw_ground_fill(
+    ctx: RenderContext,
+    cam: Dict[str, float],
+    slopes: List[Dict[str, float]],
+    ground_y_base: float,
+    grid_off: float,
+    g_size: int,
+    g_range: int,
+    ground_color: Tuple[int, int, int],
+) -> None:
+    sx = int(cam["x"] // g_size) * g_size - g_range
+    ex = int(cam["x"] // g_size) * g_size + g_range
+    sz = int(cam["z"] // g_size) * g_size - g_range
+    ez = int(cam["z"] // g_size) * g_size + g_range
+
+    near_bridge: Dict[Tuple[float, float], Tuple[float, float]] = {}
+    # 近クリップに接する頂点を集めて足元を補間する
+    for x in range(sx, ex + g_size, g_size):
+        for z in range(sz, ez + g_size, g_size):
+            dxp = x - cam["x"]
+            dzp = z - cam["z"]
+            dist = math.hypot(dxp, dzp)
+            if dist > g_range:
+                continue
+
+            y1 = ground_height(x, z, ground_y_base, slopes) + grid_off
+            y2 = ground_height(x + g_size, z, ground_y_base, slopes) + grid_off
+            y3 = ground_height(x + g_size, z + g_size, ground_y_base, slopes) + grid_off
+            y4 = ground_height(x, z + g_size, ground_y_base, slopes) + grid_off
+
+            corners = (
+                (x, y1, z),
+                (x + g_size, y2, z),
+                (x + g_size, y3, z + g_size),
+                (x, y4, z + g_size),
+            )
+            cam_poly: List[Tuple[float, float, float]] = []
+            for vx_, vy_, vz_ in corners:
+                px = vx_ - cam["x"]
+                py = vy_ - cam["y"]
+                pz = vz_ - cam["z"]
+                cam_poly.append(rot_cam(px, py, pz, cam))
+            clipped = _clip_polygon_near(cam_poly)
+            if len(clipped) < 3:
+                continue
+            pts: List[Tuple[float, float]] = []
+            for rx, ry, rz in clipped:
+                screen_pt = proj(ctx, rx, ry, rz)
+                pts.append(screen_pt)
+                if rz <= _NEAR_CLIP + 1e-3:
+                    key = (round(screen_pt[0], 2), round(screen_pt[1], 2))
+                    near_bridge[key] = screen_pt
+            pygame.draw.polygon(ctx.screen, ground_color, pts)
+
+    if near_bridge:
+        width = ctx.screen.get_width()
+        height = ctx.screen.get_height()
+        bridge_pts = sorted(near_bridge.values(), key=lambda pt: pt[0])
+        clip_poly = [(0.0, float(height)), *bridge_pts, (float(width), float(height))]
+        pygame.draw.polygon(ctx.screen, ground_color, clip_poly)
 
 
 def draw_debug(
@@ -178,11 +273,26 @@ def _render_object(
         v0 = cam_vertices[a]
         v1 = cam_vertices[b]
         v2 = cam_vertices[c]
-        if v0[2] <= 0.05 and v1[2] <= 0.05 and v2[2] <= 0.05:
+        if v0[2] <= _NEAR_CLIP and v1[2] <= _NEAR_CLIP and v2[2] <= _NEAR_CLIP:
             continue
-        # カメラ空間での裏面判定
         normal_cam = _triangle_normal(v0, v1, v2)
-        if normal_cam[2] >= 0.0:
+        tri_center_cam = (
+            (v0[0] + v1[0] + v2[0]) / 3.0,
+            (v0[1] + v1[1] + v2[1]) / 3.0,
+            (v0[2] + v1[2] + v2[2]) / 3.0,
+        )
+        view_vec = (
+            -tri_center_cam[0],
+            -tri_center_cam[1],
+            -tri_center_cam[2],
+        )
+        # カメラ視点で表面の向きを確認
+        facing = (
+            normal_cam[0] * view_vec[0]
+            + normal_cam[1] * view_vec[1]
+            + normal_cam[2] * view_vec[2]
+        )
+        if facing <= 0.0:
             continue
         # 法線からライティングを決定
         w0 = world_vertices[a]
@@ -199,7 +309,10 @@ def _render_object(
             shade = _shade_legacy(normal_cam, v0, w0, obj.color, lighting or _default_lighting_setup())
         else:
             shade = _shade(normal_world, tri_center, cam_pos, material, lighting)
-        pts2d = [proj(ctx, *v) for v in (v0, v1, v2)]
+        clipped_tri = _clip_polygon_near((v0, v1, v2))
+        if len(clipped_tri) < 3:
+            continue
+        pts2d = [proj(ctx, vx, vy, vz) for vx, vy, vz in clipped_tri]
         pygame.draw.polygon(ctx.screen, shade, pts2d)
         if enable_wire:
             pygame.draw.lines(ctx.screen, (40, 40, 40), True, pts2d, 1)

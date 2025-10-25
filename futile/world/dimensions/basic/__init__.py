@@ -6,7 +6,8 @@ DIMENSION = DimensionSettings(
     identifier="basic",
     display_name="Basic",
     gravity=-300.0,
-    sky_color=(15, 15, 20),
-    ground_color=(70, 70, 70),
+    sky_color=(135, 196, 255),
+    ground_color=(120, 96, 72),
     base_friction=8.0,
+    draw_grid=False,
 )

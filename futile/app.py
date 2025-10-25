@@ -23,6 +23,7 @@ from .render import (
     RenderContext,
     draw_debug,
     draw_grid,
+    draw_ground_fill,
     render_scene,
 )
 from .resources import MeshManager
@@ -44,7 +45,7 @@ class DefaultScene(Scene):
     ground_y_base: float = -200.0
     grid_offset: float = -30.0
     grid_size: int = 100
-    grid_range: int = 900
+    grid_range: int = 1500
     eye_height: float = 40.0
     max_step: float = 30.0
     pitch_min: float = -math.pi / 2 + 0.01
@@ -73,6 +74,7 @@ class DefaultScene(Scene):
         self.clear_color = dimension.sky_color
         self.friction = dimension.base_friction
         self.ground_color = dimension.ground_color
+        self.draw_grid = dimension.draw_grid
 
     def load(self) -> None:
         """リソースとシミュレーション状態を初期化する。"""
@@ -181,16 +183,28 @@ class DefaultScene(Scene):
             raise RuntimeError("シーンが初期化されていない")
         self.fps = self.engine.fps
         self.screen.fill(self.clear_color)
-        draw_grid(
-            self.ctx,
-            self.cam,
-            self.slopes,
-            self.ground_y_base,
-            self.grid_offset,
-            self.grid_size,
-            self.grid_range,
-            self.ground_color,
-        )
+        if self.draw_grid:
+            draw_grid(
+                self.ctx,
+                self.cam,
+                self.slopes,
+                self.ground_y_base,
+                self.grid_offset,
+                self.grid_size,
+                self.grid_range,
+                self.ground_color,
+            )
+        else:
+            draw_ground_fill(
+                self.ctx,
+                self.cam,
+                self.slopes,
+                self.ground_y_base,
+                self.grid_offset,
+                self.grid_size,
+                self.grid_range,
+                self.ground_color,
+            )
         render_scene(self.ctx, self.cam, self.world_objects)
         draw_debug(
             self.ctx,
@@ -287,22 +301,33 @@ class DefaultScene(Scene):
     def create_lighting_setup(self) -> LightingSetup:
         """ライティング構成を生成する。"""
 
+        directional_lights = [
+            DirectionalLight(
+                direction=(0.3, 0.8, 0.5),
+                color=(1.0, 0.98, 0.95),
+                intensity=0.75,
+                specular_intensity=0.2,
+            ),
+            DirectionalLight(
+                direction=(-0.2, -0.7, -0.4),
+                color=(0.4, 0.5, 0.65),
+                intensity=0.25,
+                specular_intensity=0.05,
+            ),
+        ]
+        if self.dimension.identifier == "basic":
+            directional_lights.insert(
+                0,
+                DirectionalLight(
+                    direction=(-0.35, -0.9, -0.18),
+                    color=(1.0, 0.94, 0.82),
+                    intensity=1.15,
+                    specular_intensity=0.55,
+                ),
+            )
         return LightingSetup(
             ambient_color=(0.18, 0.19, 0.22),
-            directional_lights=[
-                DirectionalLight(
-                    direction=(0.3, 0.8, 0.5),
-                    color=(1.0, 0.98, 0.95),
-                    intensity=0.75,
-                    specular_intensity=0.2,
-                ),
-                DirectionalLight(
-                    direction=(-0.2, -0.7, -0.4),
-                    color=(0.4, 0.5, 0.65),
-                    intensity=0.25,
-                    specular_intensity=0.05,
-                ),
-            ],
+            directional_lights=directional_lights,
             point_lights=[
                 PointLight(
                     position=(0.0, -80.0, 520.0),
