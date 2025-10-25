@@ -6,8 +6,11 @@ import pygame
 
 from futile import (
     CollisionWorld,
+    DirectionalLight,
+    LightingSetup,
     MeshManager,
     PhysicsState,
+    PointLight,
     RenderContext,
     WorldObject,
     build_default_collision_world,
@@ -19,6 +22,7 @@ from futile import (
     render_scene,
     upd_phys,
 )
+from futile.world import Material
 
 W, H = 1280, 720
 SPD = 180.0
@@ -40,13 +44,52 @@ PITCH_MAX = math.pi / 2 - 0.01
 ASSET_DIR = Path(__file__).parent / "assets"
 
 
+def material_from_rgb(rgb: tuple[int, int, int], shininess: float, rim: float) -> Material:
+    return Material(
+        diffuse_color=tuple(max(0.0, min(1.0, c / 255.0)) for c in rgb),
+        specular_color=(0.9, 0.9, 0.9),
+        shininess=shininess,
+        ambient_factor=1.0,
+        rim_strength=rim,
+    )
+
+
 def main() -> None:
     pygame.init()
 
     screen = pygame.display.set_mode((W, H))
     pygame.display.set_caption("Futile - Commented")
     clk = pygame.time.Clock()
-    ctx = RenderContext(screen=screen, cx=W // 2, cy=H // 2, fov_d=FOV_D)
+    lighting_setup = LightingSetup(
+        ambient_color=(0.18, 0.19, 0.22),
+        directional_lights=[
+            DirectionalLight(
+                direction=(0.3, 0.8, 0.5),
+                color=(1.0, 0.98, 0.95),
+                intensity=0.75,
+                specular_intensity=0.2,
+            ),
+            DirectionalLight(
+                direction=(-0.2, -0.7, -0.4),
+                color=(0.4, 0.5, 0.65),
+                intensity=0.25,
+                specular_intensity=0.05,
+            ),
+        ],
+        point_lights=[
+            PointLight(
+                position=(0.0, -80.0, 520.0),
+                color=(0.9, 0.85, 0.8),
+                intensity=0.45,
+                radius=520.0,
+                attenuation=1.0,
+                specular_intensity=0.08,
+            ),
+        ],
+        rim_intensity=0.08,
+    )
+    # キーライトを基準に補助光で陰影を柔らかく調整
+    ctx = RenderContext(screen=screen, cx=W // 2, cy=H // 2, fov_d=FOV_D, lighting=lighting_setup)
 
     cam = {"x": 0.0, "y": 0.0, "z": 0.0, "yaw": 0.0, "pitch": 0.0}
     slopes: list[dict[str, float]] = []
@@ -63,6 +106,7 @@ def main() -> None:
             rotation=(0.0, 0.0, 0.0),
             scale=60.0,
             color=(190, 180, 210),
+            material=material_from_rgb((190, 180, 210), shininess=28.0, rim=0.65),
         ),
         WorldObject(
             mesh=mesh_manager.load("pyramid.obj"),
@@ -70,6 +114,7 @@ def main() -> None:
             rotation=(0.0, math.radians(25.0), 0.0),
             scale=80.0,
             color=(210, 170, 150),
+            material=material_from_rgb((210, 170, 150), shininess=34.0, rim=0.55),
         ),
     ]
 
