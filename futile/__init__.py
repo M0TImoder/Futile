@@ -1,3 +1,4 @@
+from .app import GameApplication
 from .input import read_input
 from .mesh_loader import MeshLoaderError
 from .physics import (
@@ -22,9 +23,10 @@ from .render import (
     render_scene,
 )
 from .resources import MeshManager
-from .world import Mesh, MeshGeometry, MeshLOD, WorldObject
+from .world import Material, Mesh, MeshGeometry, MeshLOD, WorldObject
 
 __all__ = [
+    "GameApplication",
     "read_input",
     "MeshLoaderError",
     "MeshManager",
@@ -45,6 +47,7 @@ __all__ = [
     "draw_grid",
     "draw_debug",
     "render_scene",
+    "Material",
     "Mesh",
     "MeshGeometry",
     "MeshLOD",
