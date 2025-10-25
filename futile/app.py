@@ -26,7 +26,7 @@ from .render import (
     render_scene,
 )
 from .resources import MeshManager
-from .world import Material, WorldObject
+from .world import DimensionSettings, Material, WorldObject, load_dimension
 
 
 class DefaultScene(Scene):
@@ -51,8 +51,11 @@ class DefaultScene(Scene):
     pitch_max: float = math.pi / 2 - 0.01
     clear_color: tuple[int, int, int] = (15, 15, 20)
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, engine: Engine, dimension: DimensionSettings | None = None) -> None:
         super().__init__(engine)
+        if dimension is None:
+            dimension = load_dimension("basic")
+        self.dimension = dimension
         self.screen: Optional[pygame.Surface] = None
         self.ctx: Optional[RenderContext] = None
         self.lighting: Optional[LightingSetup] = None
@@ -66,6 +69,10 @@ class DefaultScene(Scene):
         self.jump_velocity = self.get_default_jump_velocity()
         self.jump_default = self.jump_velocity
         self.fps = 0.0
+        self.gravity = dimension.gravity
+        self.clear_color = dimension.sky_color
+        self.friction = dimension.base_friction
+        self.ground_color = dimension.ground_color
 
     def load(self) -> None:
         """リソースとシミュレーション状態を初期化する。"""
@@ -182,6 +189,7 @@ class DefaultScene(Scene):
             self.grid_offset,
             self.grid_size,
             self.grid_range,
+            self.ground_color,
         )
         render_scene(self.ctx, self.cam, self.world_objects)
         draw_debug(
@@ -324,13 +332,15 @@ class GameApplication:
     time_step: float = 0.0
     config_class: Type[EngineConfig] = EngineConfig
     scene_class: Type[Scene] = DefaultScene
+    dimension_name: str = "basic"
 
     def __init__(self, config: Optional[EngineConfig] = None) -> None:
         if config is None:
             config = self.create_config()
         self.config = config
         self.engine = self.create_engine(self.config)
-        self.scene = self.create_scene(self.engine)
+        self.dimension = self.create_dimension()
+        self.scene = self.create_scene(self.engine, self.dimension)
 
     def create_config(self) -> EngineConfig:
         """アプリケーションに必要なエンジン設定を構築する。"""
@@ -348,10 +358,15 @@ class GameApplication:
 
         return Engine(config)
 
-    def create_scene(self, engine: Engine) -> Scene:
+    def create_dimension(self) -> DimensionSettings:
+        """選択されたディメンション設定を読み込む。"""
+
+        return load_dimension(self.dimension_name)
+
+    def create_scene(self, engine: Engine, dimension: DimensionSettings) -> Scene:
         """ゲームで使用するシーンを組み立てる。"""
 
-        return self.scene_class(engine)
+        return self.scene_class(engine, dimension=dimension)
 
     def run(self) -> None:
         """シーンをエンジンに登録して実行する。"""

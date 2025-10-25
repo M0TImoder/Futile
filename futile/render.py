@@ -77,12 +77,13 @@ def draw_grid(
     grid_off: float,
     g_size: int,
     g_range: int,
+    grid_color: Tuple[int, int, int],
 ) -> None:
     sx = int(cam["x"] // g_size) * g_size - g_range
     ex = int(cam["x"] // g_size) * g_size + g_range
     sz = int(cam["z"] // g_size) * g_size - g_range
     ez = int(cam["z"] // g_size) * g_size + g_range
-    col = (70, 70, 70)
+    col = grid_color
     inner_r = 200
 
     for x in range(sx, ex + g_size, g_size):

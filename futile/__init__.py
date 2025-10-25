@@ -24,7 +24,16 @@ from .render import (
     render_scene,
 )
 from .resources import MeshManager
-from .world import Material, Mesh, MeshGeometry, MeshLOD, WorldObject
+from .world import (
+    DimensionSettings,
+    Material,
+    Mesh,
+    MeshGeometry,
+    MeshLOD,
+    WorldObject,
+    available_dimensions,
+    load_dimension,
+)
 
 __all__ = [
     "EngineConfig",
@@ -52,6 +61,9 @@ __all__ = [
     "draw_grid",
     "draw_debug",
     "render_scene",
+    "DimensionSettings",
+    "available_dimensions",
+    "load_dimension",
     "Material",
     "Mesh",
     "MeshGeometry",

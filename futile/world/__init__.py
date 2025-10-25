@@ -1,12 +1,25 @@
-"""World object and mesh data structures."""
+"""World object structuresとディメンション設定をまとめたモジュール。"""
 
 from __future__ import annotations
 
 import math
+import pkgutil
 from dataclasses import dataclass, field
-from typing import Iterable, List, Sequence, Tuple
+from importlib import import_module
+from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
 Vector3 = Tuple[float, float, float]
+ColorRGB = Tuple[int, int, int]
+
+
+@dataclass(frozen=True)
+class DimensionSettings:
+    identifier: str
+    display_name: str
+    gravity: float
+    sky_color: ColorRGB
+    ground_color: ColorRGB
+    base_friction: float
 
 
 @dataclass
@@ -125,3 +138,34 @@ class WorldObject:
         dy = self.position[1] - point[1]
         dz = self.position[2] - point[2]
         return math.sqrt(dx * dx + dy * dy + dz * dz)
+
+
+_DIMENSION_CACHE: Dict[str, DimensionSettings] = {}
+
+
+def _dimension_module_path(name: str) -> str:
+    return f"{__name__}.dimensions.{name}"
+
+
+def load_dimension(name: str) -> DimensionSettings:
+    if name not in _DIMENSION_CACHE:
+        module = import_module(_dimension_module_path(name))
+        settings = getattr(module, "DIMENSION", None)
+        if not isinstance(settings, DimensionSettings):
+            raise ValueError(f"ディメンション'{name}'の設定が正しく定義されていない")
+        if settings.identifier != name:
+            raise ValueError("ディメンション識別子がモジュール名と一致していない")
+        _DIMENSION_CACHE[name] = settings
+    return _DIMENSION_CACHE[name]
+
+
+def available_dimensions() -> Mapping[str, DimensionSettings]:
+    package = import_module(f"{__name__}.dimensions")
+    discovered: Dict[str, DimensionSettings] = {}
+    for module_info in pkgutil.iter_modules(package.__path__):
+        name = module_info.name
+        try:
+            discovered[name] = load_dimension(name)
+        except Exception:
+            continue
+    return dict(discovered)

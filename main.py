@@ -7,6 +7,7 @@ class FutileApplication(GameApplication):
     """デフォルトシーンを起動するサンプルアプリケーション。"""
 
     window_title = "Futile - Commented"
+    dimension_name = "basic"
 
 
 def main() -> None:
