@@ -5,7 +5,7 @@ from typing import Dict, List, Sequence, Tuple
 import pygame
 
 from .physics import PhysicsState, ground_height
-from .world import MeshGeometry, WorldObject
+from .world import Material, MeshGeometry, WorldObject
 
 
 @dataclass
@@ -23,8 +23,16 @@ class PointLight:
     position: Tuple[float, float, float]
     color: Tuple[float, float, float]
     intensity: float = 1.0
+    radius: float = 0.0
     attenuation: float = 0.0
     specular_intensity: float = 0.0
+    _inv_radius: float = field(init=False, repr=False, default=0.0)
+
+    def __post_init__(self) -> None:
+        if self.radius > 0.0:
+            self._inv_radius = 1.0 / self.radius
+        else:
+            self._inv_radius = 0.0
 
 
 @dataclass
@@ -139,18 +147,7 @@ def render_scene(
     if lighting is None:
         lighting = ctx.lighting
     if lighting is None:
-        lighting = LightingSetup(
-            ambient_color=(0.2, 0.2, 0.2),
-            directional_lights=[
-                DirectionalLight(
-                    direction=(0.3, 0.8, 0.5),
-                    color=(1.0, 1.0, 1.0),
-                    intensity=0.6,
-                    specular_intensity=0.15,
-                )
-            ],
-            rim_intensity=0.05,
-        )
+        lighting = _default_lighting_setup()
     cam_pos = (cam["x"], cam["y"], cam["z"])
     visible_objects = [obj for obj in objects if obj.visible]
     visible_objects.sort(key=lambda obj: obj.distance_to(cam_pos), reverse=True)
@@ -169,6 +166,7 @@ def _render_object(
 ) -> None:
     world_vertices = list(obj.world_vertices(geometry))
     cam_vertices: List[Tuple[float, float, float]] = []
+    cam_pos = (cam["x"], cam["y"], cam["z"])
     for vx, vy, vz in world_vertices:
         px = vx - cam["x"]
         py = vy - cam["y"]
@@ -182,12 +180,24 @@ def _render_object(
         if v0[2] <= 0.05 and v1[2] <= 0.05 and v2[2] <= 0.05:
             continue
         # カメラ空間での裏面判定
-        normal = _triangle_normal(v0, v1, v2)
-        if normal[2] >= 0.0:
+        normal_cam = _triangle_normal(v0, v1, v2)
+        if normal_cam[2] >= 0.0:
             continue
         # 法線からライティングを決定
         w0 = world_vertices[a]
-        shade = _shade(normal, v0, w0, obj.color, lighting)
+        w1 = world_vertices[b]
+        w2 = world_vertices[c]
+        normal_world = _triangle_normal(w0, w1, w2)
+        tri_center = (
+            (w0[0] + w1[0] + w2[0]) / 3.0,
+            (w0[1] + w1[1] + w2[1]) / 3.0,
+            (w0[2] + w1[2] + w2[2]) / 3.0,
+        )
+        material = obj.material
+        if material is None or lighting is None:
+            shade = _shade_legacy(normal_cam, v0, w0, obj.color, lighting or _default_lighting_setup())
+        else:
+            shade = _shade(normal_world, tri_center, cam_pos, material, lighting)
         pts2d = [proj(ctx, *v) for v in (v0, v1, v2)]
         pygame.draw.polygon(ctx.screen, shade, pts2d)
         if enable_wire:
@@ -205,6 +215,107 @@ def _triangle_normal(v0: Tuple[float, float, float], v1: Tuple[float, float, flo
 
 
 def _shade(
+    normal_world: Tuple[float, float, float],
+    tri_center_world: Tuple[float, float, float],
+    cam_pos: Tuple[float, float, float],
+    material: Material,
+    lighting: LightingSetup,
+) -> Tuple[int, int, int]:
+    lighting = lighting or _default_lighting_setup()
+    normal = _normalize(normal_world)
+    if normal == (0.0, 0.0, 0.0):
+        return tuple(int(max(0.0, min(1.0, c)) * 255.0) for c in material.diffuse_color)
+    view_dir = _normalize(
+        (
+            cam_pos[0] - tri_center_world[0],
+            cam_pos[1] - tri_center_world[1],
+            cam_pos[2] - tri_center_world[2],
+        )
+    )
+    # リムライトの視線依存成分を算出
+    rim_view = max(0.0, 1.0 - max(0.0, normal[0] * view_dir[0] + normal[1] * view_dir[1] + normal[2] * view_dir[2]))
+    ambient = [
+        lighting.ambient_color[i] * material.ambient_factor * material.diffuse_color[i]
+        for i in range(3)
+    ]
+    diffuse = [0.0, 0.0, 0.0]
+    specular = [0.0, 0.0, 0.0]
+    shininess = max(0.0, material.shininess)
+    for light in lighting.directional_lights:
+        light_dir = _normalize(light.direction)
+        lambert = max(0.0, normal[0] * light_dir[0] + normal[1] * light_dir[1] + normal[2] * light_dir[2])
+        lambert *= light.intensity
+        if lambert > 0.0:
+            for i in range(3):
+                diffuse[i] += lambert * light.color[i] * material.diffuse_color[i]
+            if light.specular_intensity > 0.0 and shininess > 0.0:
+                half_vec = _normalize(
+                    (
+                        light_dir[0] + view_dir[0],
+                        light_dir[1] + view_dir[1],
+                        light_dir[2] + view_dir[2],
+                    )
+                )
+                if half_vec != (0.0, 0.0, 0.0):
+                    spec_power = max(
+                        0.0,
+                        normal[0] * half_vec[0]
+                        + normal[1] * half_vec[1]
+                        + normal[2] * half_vec[2],
+                    )
+                    spec = (spec_power ** shininess) * light.specular_intensity
+                    for i in range(3):
+                        specular[i] += spec * light.color[i] * material.specular_color[i]
+    for light in lighting.point_lights:
+        to_light = (
+            light.position[0] - tri_center_world[0],
+            light.position[1] - tri_center_world[1],
+            light.position[2] - tri_center_world[2],
+        )
+        dist_sq = to_light[0] * to_light[0] + to_light[1] * to_light[1] + to_light[2] * to_light[2]
+        if dist_sq == 0.0:
+            continue
+        dist = math.sqrt(dist_sq)
+        light_dir = (to_light[0] / dist, to_light[1] / dist, to_light[2] / dist)
+        range_factor = 1.0
+        if light.radius > 0.0 and light._inv_radius > 0.0:
+            # 半径に応じて線形減衰を計算
+            range_factor = max(0.0, 1.0 - dist * light._inv_radius)
+            range_factor *= range_factor
+        lambert = max(0.0, normal[0] * light_dir[0] + normal[1] * light_dir[1] + normal[2] * light_dir[2])
+        atten_mul = light.attenuation if light.attenuation > 0.0 else 1.0
+        lambert *= light.intensity * range_factor * atten_mul
+        if lambert > 0.0:
+            for i in range(3):
+                diffuse[i] += lambert * light.color[i] * material.diffuse_color[i]
+            if light.specular_intensity > 0.0 and shininess > 0.0:
+                half_vec = _normalize(
+                    (
+                        light_dir[0] + view_dir[0],
+                        light_dir[1] + view_dir[1],
+                        light_dir[2] + view_dir[2],
+                    )
+                )
+                if half_vec != (0.0, 0.0, 0.0):
+                    spec_power = max(
+                        0.0,
+                        normal[0] * half_vec[0]
+                        + normal[1] * half_vec[1]
+                        + normal[2] * half_vec[2],
+                    )
+                    spec = (spec_power ** shininess) * light.specular_intensity * range_factor * atten_mul
+                    for i in range(3):
+                        specular[i] += spec * light.color[i] * material.specular_color[i]
+    rim_component = lighting.rim_intensity * material.rim_strength * rim_view
+    shaded = []
+    for i in range(3):
+        intensity = ambient[i] + diffuse[i] + specular[i] + rim_component * material.diffuse_color[i]
+        intensity = max(0.0, min(1.0, intensity))
+        shaded.append(int(intensity * 255.0))
+    return tuple(shaded)
+
+
+def _shade_legacy(
     normal: Tuple[float, float, float],
     view_point: Tuple[float, float, float],
     world_point: Tuple[float, float, float],
@@ -261,6 +372,21 @@ def _shade(
         intensity = max(0.0, min(1.0, intensity))
         shaded.append(min(255, max(0, int(channel * intensity))))
     return tuple(shaded)
+
+
+def _default_lighting_setup() -> LightingSetup:
+    return LightingSetup(
+        ambient_color=(0.2, 0.2, 0.2),
+        directional_lights=[
+            DirectionalLight(
+                direction=(0.3, 0.8, 0.5),
+                color=(1.0, 1.0, 1.0),
+                intensity=0.6,
+                specular_intensity=0.15,
+            )
+        ],
+        rim_intensity=0.05,
+    )
 
 
 def _normalize(vec: Tuple[float, float, float]) -> Tuple[float, float, float]:

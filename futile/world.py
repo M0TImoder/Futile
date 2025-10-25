@@ -10,6 +10,15 @@ Vector3 = Tuple[float, float, float]
 
 
 @dataclass
+class Material:
+    diffuse_color: Tuple[float, float, float]
+    specular_color: Tuple[float, float, float] = (1.0, 1.0, 1.0)
+    shininess: float = 16.0
+    ambient_factor: float = 1.0
+    rim_strength: float = 1.0
+
+
+@dataclass
 class MeshGeometry:
     vertices: List[Vector3]
     normals: List[Vector3]
@@ -57,6 +66,7 @@ class WorldObject:
     rotation: Vector3
     scale: Vector3 | float
     color: Tuple[int, int, int] = (170, 170, 190)
+    material: Material | None = None
     collider: Collider | None = None
     visible: bool = True
 
@@ -65,6 +75,20 @@ class WorldObject:
             self.scale = (float(self.scale), float(self.scale), float(self.scale))
         else:
             self.scale = tuple(float(v) for v in self.scale)
+        if self.material is None:
+            base = tuple(max(0.0, min(1.0, c / 255.0)) for c in self.color)
+            self.material = Material(diffuse_color=base)
+        else:
+            diffuse = tuple(max(0.0, min(1.0, channel)) for channel in self.material.diffuse_color)
+            specular = tuple(max(0.0, min(1.0, channel)) for channel in self.material.specular_color)
+            self.material = Material(
+                diffuse_color=diffuse,
+                specular_color=specular,
+                shininess=self.material.shininess,
+                ambient_factor=self.material.ambient_factor,
+                rim_strength=self.material.rim_strength,
+            )
+            self.color = tuple(int(channel * 255.0) for channel in diffuse)
         if self.collider is None:
             largest_scale = max(self.scale)
             self.collider = Collider(radius=self.mesh.bounding_radius * largest_scale)
