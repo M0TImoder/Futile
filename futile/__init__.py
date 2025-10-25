@@ -1,4 +1,5 @@
-from .app import GameApplication
+from .app import DefaultScene, GameApplication
+from .engine import Engine, EngineConfig, Scene
 from .input import read_input
 from .mesh_loader import MeshLoaderError
 from .physics import (
@@ -26,6 +27,10 @@ from .resources import MeshManager
 from .world import Material, Mesh, MeshGeometry, MeshLOD, WorldObject
 
 __all__ = [
+    "EngineConfig",
+    "Engine",
+    "Scene",
+    "DefaultScene",
     "GameApplication",
     "read_input",
     "MeshLoaderError",

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, Type
 
 import pygame
 
+from .engine import Engine, EngineConfig, Scene
 from .input import read_input
 from .physics import (
     CollisionWorld,
@@ -28,11 +29,9 @@ from .resources import MeshManager
 from .world import Material, WorldObject
 
 
-class GameApplication:
-    width: int = 1280
-    height: int = 720
-    window_title: str = "Futile - Commented"
-    target_fps: int = 60
+class DefaultScene(Scene):
+    """標準的なウォークスルーシーン。"""
+
     move_speed: float = 180.0
     dash_multiplier: float = 1.9
     acceleration: float = 15.0
@@ -52,13 +51,27 @@ class GameApplication:
     pitch_max: float = math.pi / 2 - 0.01
     clear_color: tuple[int, int, int] = (15, 15, 20)
 
-    def __init__(self) -> None:
-        pygame.init()
-        self.running = True
-        self.clock = pygame.time.Clock()
-        size = self.get_window_size()
-        self.screen = pygame.display.set_mode(size)
-        pygame.display.set_caption(self.get_window_title())
+    def __init__(self, engine: Engine) -> None:
+        super().__init__(engine)
+        self.screen: Optional[pygame.Surface] = None
+        self.ctx: Optional[RenderContext] = None
+        self.lighting: Optional[LightingSetup] = None
+        self.cam: dict[str, float] = {}
+        self.slopes: list[dict[str, Any]] = []
+        self.collision_world: Optional[CollisionWorld] = None
+        self.state: Optional[PhysicsState] = None
+        self.asset_directory = self.get_asset_directory()
+        self.mesh_manager: Optional[MeshManager] = None
+        self.world_objects: list[WorldObject] = []
+        self.jump_velocity = self.get_default_jump_velocity()
+        self.jump_default = self.jump_velocity
+        self.fps = 0.0
+
+    def load(self) -> None:
+        """リソースとシミュレーション状態を初期化する。"""
+
+        self.screen = self.engine.screen
+        size = (self.engine.config.width, self.engine.config.height)
         self.lighting = self.create_lighting_setup()
         self.ctx = RenderContext(
             screen=self.screen,
@@ -69,129 +82,33 @@ class GameApplication:
         )
         self.cam = self.create_camera()
         self.slopes = self.create_slopes()
-        self.collision_world = self.create_collision_world(self.slopes)
-        self.state = self.create_physics_state()
+        collision_world = self.create_collision_world(self.slopes)
+        self.collision_world = collision_world
+        state = self.create_physics_state()
+        self.state = state
         self.jump_velocity = self.get_default_jump_velocity()
         self.jump_default = self.jump_velocity
-        self.asset_directory = self.get_asset_directory()
-        self.mesh_manager = self.create_mesh_manager(self.asset_directory)
-        self.world_objects = self.create_world_objects(self.mesh_manager)
+        mesh_manager = self.create_mesh_manager(self.asset_directory)
+        self.mesh_manager = mesh_manager
+        self.world_objects = self.create_world_objects(mesh_manager)
         self.cam["y"] = ground_height(
             self.cam["x"],
             self.cam["z"],
             self.ground_y_base,
-            self.collision_world,
+            collision_world,
         ) + self.eye_height
         pygame.event.set_grab(True)
         pygame.mouse.set_visible(False)
-        self.fps = 0.0
-
-    def get_window_size(self) -> tuple[int, int]:
-        return self.width, self.height
-
-    def get_window_title(self) -> str:
-        return self.window_title
-
-    def get_target_fps(self) -> int:
-        return self.target_fps
-
-    def get_default_jump_velocity(self) -> float:
-        return self.default_jump_velocity
-
-    def get_asset_directory(self) -> Path:
-        return Path(__file__).resolve().parent.parent / "assets"
-
-    def create_camera(self) -> dict[str, float]:
-        return {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 0.0,
-            "yaw": 0.0,
-            "pitch": 0.0,
-        }
-
-    def create_slopes(self) -> list[dict[str, Any]]:
-        return []
-
-    def create_collision_world(self, slopes: list[dict[str, Any]]) -> CollisionWorld:
-        return build_default_collision_world(self.ground_y_base, slopes)
-
-    def create_physics_state(self) -> PhysicsState:
-        return PhysicsState()
-
-    def create_mesh_manager(self, asset_directory: Path) -> MeshManager:
-        return MeshManager(asset_directory)
-
-    def material_from_rgb(self, rgb: tuple[int, int, int], shininess: float, rim: float) -> Material:
-        return Material(
-            diffuse_color=tuple(max(0.0, min(1.0, c / 255.0)) for c in rgb),
-            specular_color=(0.9, 0.9, 0.9),
-            shininess=shininess,
-            ambient_factor=1.0,
-            rim_strength=rim,
-        )
-
-    def create_world_objects(self, mesh_manager: MeshManager) -> list[WorldObject]:
-        return [
-            WorldObject(
-                mesh=mesh_manager.load("cube.fsm"),
-                position=(0.0, -120.0, 420.0),
-                rotation=(0.0, 0.0, 0.0),
-                scale=60.0,
-                color=(190, 180, 210),
-                material=self.material_from_rgb((190, 180, 210), shininess=28.0, rim=0.65),
-            ),
-            WorldObject(
-                mesh=mesh_manager.load("pyramid.obj"),
-                position=(160.0, -140.0, 600.0),
-                rotation=(0.0, math.radians(25.0), 0.0),
-                scale=80.0,
-                color=(210, 170, 150),
-                material=self.material_from_rgb((210, 170, 150), shininess=34.0, rim=0.55),
-            ),
-        ]
-
-    def create_lighting_setup(self) -> LightingSetup:
-        return LightingSetup(
-            ambient_color=(0.18, 0.19, 0.22),
-            directional_lights=[
-                DirectionalLight(
-                    direction=(0.3, 0.8, 0.5),
-                    color=(1.0, 0.98, 0.95),
-                    intensity=0.75,
-                    specular_intensity=0.2,
-                ),
-                DirectionalLight(
-                    direction=(-0.2, -0.7, -0.4),
-                    color=(0.4, 0.5, 0.65),
-                    intensity=0.25,
-                    specular_intensity=0.05,
-                ),
-            ],
-            point_lights=[
-                PointLight(
-                    position=(0.0, -80.0, 520.0),
-                    color=(0.9, 0.85, 0.8),
-                    intensity=0.45,
-                    radius=520.0,
-                    attenuation=1.0,
-                    specular_intensity=0.08,
-                ),
-            ],
-            rim_intensity=0.08,
-        )
-
-    def process_events(self) -> None:
-        for event in pygame.event.get():
-            self.handle_event(event)
 
     def handle_event(self, event: pygame.event.Event) -> None:
+        """入力イベントを処理する。"""
+
         if event.type == pygame.QUIT:
-            self.stop()
+            self.engine.stop()
             return
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
-                self.stop()
+                self.engine.stop()
                 return
             if event.key == pygame.K_LEFTBRACKET:
                 self.jump_velocity = max(0.0, self.jump_velocity - self.jump_step)
@@ -211,24 +128,11 @@ class GameApplication:
                 except pygame.error:
                     pass
 
-    def stop(self) -> None:
-        self.running = False
-
-    def run(self) -> None:
-        try:
-            while self.running:
-                self.process_events()
-                if not self.running:
-                    break
-                ms = self.clock.tick(self.get_target_fps())
-                dt = ms / 1000.0
-                self.fps = self.clock.get_fps()
-                self.update(dt)
-                self.render()
-        finally:
-            self.shutdown()
-
     def update(self, dt: float) -> None:
+        """タイムステップ分だけ物理状態を前進させる。"""
+
+        if self.state is None or self.collision_world is None:
+            raise RuntimeError("シーンが初期化されていない")
         mvx, mvz, dash, jump = read_input(
             self.cam,
             self.mouse_sensitivity,
@@ -264,6 +168,11 @@ class GameApplication:
         )
 
     def render(self) -> None:
+        """描画コンテキストを用いてシーンを表示する。"""
+
+        if self.ctx is None or self.screen is None or self.state is None:
+            raise RuntimeError("シーンが初期化されていない")
+        self.fps = self.engine.fps
         self.screen.fill(self.clear_color)
         draw_grid(
             self.ctx,
@@ -284,9 +193,168 @@ class GameApplication:
             self.gravity,
             self.slopes,
         )
-        pygame.display.flip()
 
-    def shutdown(self) -> None:
+    def unload(self) -> None:
+        """カーソル状態を戻しリソース参照を破棄する。"""
+
         pygame.event.set_grab(False)
         pygame.mouse.set_visible(True)
-        pygame.quit()
+        self.screen = None
+        self.ctx = None
+        self.lighting = None
+        self.collision_world = None
+        self.state = None
+        self.mesh_manager = None
+        self.world_objects = []
+
+    def get_asset_directory(self) -> Path:
+        """アセットディレクトリのパスを返す。"""
+
+        return Path(__file__).resolve().parent.parent / "assets"
+
+    def create_camera(self) -> dict[str, float]:
+        """カメラの初期状態を生成する。"""
+
+        return {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "yaw": 0.0,
+            "pitch": 0.0,
+        }
+
+    def create_slopes(self) -> list[dict[str, Any]]:
+        """地形スロープ情報を生成する。"""
+
+        return []
+
+    def create_collision_world(self, slopes: list[dict[str, Any]]) -> CollisionWorld:
+        """衝突判定用のワールドを構築する。"""
+
+        return build_default_collision_world(self.ground_y_base, slopes)
+
+    def create_physics_state(self) -> PhysicsState:
+        """プレイヤー物理状態を生成する。"""
+
+        return PhysicsState()
+
+    def create_mesh_manager(self, asset_directory: Path) -> MeshManager:
+        """メッシュリソースマネージャーを構築する。"""
+
+        return MeshManager(asset_directory)
+
+    def material_from_rgb(self, rgb: tuple[int, int, int], shininess: float, rim: float) -> Material:
+        """RGB値からマテリアルを生成する。"""
+
+        return Material(
+            diffuse_color=tuple(max(0.0, min(1.0, c / 255.0)) for c in rgb),
+            specular_color=(0.9, 0.9, 0.9),
+            shininess=shininess,
+            ambient_factor=1.0,
+            rim_strength=rim,
+        )
+
+    def create_world_objects(self, mesh_manager: MeshManager) -> list[WorldObject]:
+        """シーン内に配置するオブジェクトを構築する。"""
+
+        return [
+            WorldObject(
+                mesh=mesh_manager.load("cube.fsm"),
+                position=(0.0, -120.0, 420.0),
+                rotation=(0.0, 0.0, 0.0),
+                scale=60.0,
+                color=(190, 180, 210),
+                material=self.material_from_rgb((190, 180, 210), shininess=28.0, rim=0.65),
+            ),
+            WorldObject(
+                mesh=mesh_manager.load("pyramid.obj"),
+                position=(160.0, -140.0, 600.0),
+                rotation=(0.0, math.radians(25.0), 0.0),
+                scale=80.0,
+                color=(210, 170, 150),
+                material=self.material_from_rgb((210, 170, 150), shininess=34.0, rim=0.55),
+            ),
+        ]
+
+    def create_lighting_setup(self) -> LightingSetup:
+        """ライティング構成を生成する。"""
+
+        return LightingSetup(
+            ambient_color=(0.18, 0.19, 0.22),
+            directional_lights=[
+                DirectionalLight(
+                    direction=(0.3, 0.8, 0.5),
+                    color=(1.0, 0.98, 0.95),
+                    intensity=0.75,
+                    specular_intensity=0.2,
+                ),
+                DirectionalLight(
+                    direction=(-0.2, -0.7, -0.4),
+                    color=(0.4, 0.5, 0.65),
+                    intensity=0.25,
+                    specular_intensity=0.05,
+                ),
+            ],
+            point_lights=[
+                PointLight(
+                    position=(0.0, -80.0, 520.0),
+                    color=(0.9, 0.85, 0.8),
+                    intensity=0.45,
+                    radius=520.0,
+                    attenuation=1.0,
+                    specular_intensity=0.08,
+                ),
+            ],
+            rim_intensity=0.08,
+        )
+
+    def get_default_jump_velocity(self) -> float:
+        """ジャンプ初速度の既定値を返す。"""
+
+        return self.default_jump_velocity
+
+
+class GameApplication:
+    """エンジンとシーンをまとめて起動するためのヘルパー。"""
+
+    width: int = 1280
+    height: int = 720
+    window_title: str = "Futile - Commented"
+    target_fps: int = 60
+    time_step: float = 0.0
+    config_class: Type[EngineConfig] = EngineConfig
+    scene_class: Type[Scene] = DefaultScene
+
+    def __init__(self, config: Optional[EngineConfig] = None) -> None:
+        if config is None:
+            config = self.create_config()
+        self.config = config
+        self.engine = self.create_engine(self.config)
+        self.scene = self.create_scene(self.engine)
+
+    def create_config(self) -> EngineConfig:
+        """アプリケーションに必要なエンジン設定を構築する。"""
+
+        return self.config_class(
+            width=self.width,
+            height=self.height,
+            window_title=self.window_title,
+            target_fps=self.target_fps,
+            time_step=self.time_step,
+        )
+
+    def create_engine(self, config: EngineConfig) -> Engine:
+        """設定を基にエンジンを生成する。"""
+
+        return Engine(config)
+
+    def create_scene(self, engine: Engine) -> Scene:
+        """ゲームで使用するシーンを組み立てる。"""
+
+        return self.scene_class(engine)
+
+    def run(self) -> None:
+        """シーンをエンジンに登録して実行する。"""
+
+        self.engine.set_scene(self.scene)
+        self.engine.run()
