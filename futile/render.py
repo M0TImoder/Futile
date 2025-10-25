@@ -207,10 +207,18 @@ def draw_ground_fill(
             pygame.draw.polygon(ctx.screen, ground_color, pts)
 
     if near_bridge:
-        width = ctx.screen.get_width()
         height = ctx.screen.get_height()
         bridge_pts = sorted(near_bridge.values(), key=lambda pt: pt[0])
-        clip_poly = [(0.0, float(height)), *bridge_pts, (float(width), float(height))]
+        if len(bridge_pts) >= 2:
+            left_x = bridge_pts[0][0]
+            right_x = bridge_pts[-1][0]
+        else:
+            left_x = right_x = bridge_pts[0][0]
+        clip_poly = [
+            (left_x, float(height)),
+            *bridge_pts,
+            (right_x, float(height)),
+        ]
         pygame.draw.polygon(ctx.screen, ground_color, clip_poly)
 
 
